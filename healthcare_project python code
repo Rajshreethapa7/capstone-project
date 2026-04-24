@@ -1,0 +1,158 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, count, trim
+from pyspark.sql.types import StringType
+
+# -----------------------------
+# Spark session
+# -----------------------------
+spark = SparkSession.builder \
+    .appName("healthcare-insurance-project") \
+    .getOrCreate()
+
+# -----------------------------
+# Local file paths inside Docker
+# -----------------------------
+BASE_PATH = "file:///home/takeo/pycharmprojects/pythonproject/input-data"
+
+claims_path = f"{BASE_PATH}/claims.json"
+disease_path = f"{BASE_PATH}/disease.csv"
+group_path = f"{BASE_PATH}/group.csv"
+grpsubgrp_path = f"{BASE_PATH}/grpsubgrp.csv"
+hospital_path = f"{BASE_PATH}/hospital.csv"
+patient_path = f"{BASE_PATH}/Patient_records.csv"
+subgroup_path = f"{BASE_PATH}/subgroup.csv"
+subscriber_path = f"{BASE_PATH}/subscriber.csv"
+
+# -----------------------------
+# Read files
+# -----------------------------
+claims_df = spark.read.option("multiline", "true").json(claims_path)
+
+disease_df = spark.read.option("header", "true").option("inferSchema", "true").csv(disease_path)
+group_df = spark.read.option("header", "true").option("inferSchema", "true").csv(group_path)
+grpsubgrp_df = spark.read.option("header", "true").option("inferSchema", "true").csv(grpsubgrp_path)
+hospital_df = spark.read.option("header", "true").option("inferSchema", "true").csv(hospital_path)
+patient_df = spark.read.option("header", "true").option("inferSchema", "true").csv(patient_path)
+subgroup_df = spark.read.option("header", "true").option("inferSchema", "true").csv(subgroup_path)
+subscriber_df = spark.read.option("header", "true").option("inferSchema", "true").csv(subscriber_path)
+
+# -----------------------------
+# Put all dataframes in dictionary
+# -----------------------------
+datasets = {
+    "claims_df": claims_df,
+    "disease_df": disease_df,
+    "group_df": group_df,
+    "grpsubgrp_df": grpsubgrp_df,
+    "hospital_df": hospital_df,
+    "patient_df": patient_df,
+    "subgroup_df": subgroup_df,
+    "subscriber_df": subscriber_df
+}
+
+# -----------------------------
+# Show columns, schema, and sample rows
+# -----------------------------
+for name, df in datasets.items():
+
+    print("\n" + "=" * 80)
+    print(f"COLUMNS FOR: {name}")
+    print("=" * 80)
+    print(df.columns)
+
+    print("\n" + "=" * 80)
+    print(f"SCHEMA FOR: {name}")
+    print("=" * 80)
+    df.printSchema()
+
+    print("\n" + "=" * 80)
+    print(f"SAMPLE DATA FOR: {name}")
+    print("=" * 80)
+    df.show(5, truncate=False)
+
+# -----------------------------
+# Null count function
+# -----------------------------
+def null_count(df, df_name):
+    print("\n" + "-" * 80)
+    print(f"NULL COUNT FOR: {df_name}")
+    print("-" * 80)
+
+    df.select([
+        count(
+            when(
+                col(c).isNull() | (trim(col(c).cast("string")) == ""),
+                c
+            )
+        ).alias(c)
+        for c in df.columns
+    ]).show(truncate=False)
+
+# -----------------------------
+# Replace nulls/blanks in string columns with 'NA'
+# -----------------------------
+def replace_nulls_with_na(df):
+    for field in df.schema.fields:
+        if isinstance(field.dataType, StringType):
+            df = df.withColumn(
+                field.name,
+                when(
+                    col(field.name).isNull() | (trim(col(field.name)) == ""),
+                    "NA"
+                ).otherwise(col(field.name))
+            )
+    return df
+
+# -----------------------------
+# Clean dataframe
+# -----------------------------
+def clean_df(df, df_name):
+    print("\n" + "*" * 80)
+    print(f"START CLEANING: {df_name}")
+    print("*" * 80)
+
+    print(f"Original row count for {df_name}: {df.count()}")
+    null_count(df, df_name)
+
+    df = replace_nulls_with_na(df)
+    df = df.dropDuplicates()
+
+    print(f"Row count after dropping duplicates for {df_name}: {df.count()}")
+    null_count(df, f"{df_name} after cleaning")
+
+    print("\n" + "=" * 80)
+    print(f"CLEANED SAMPLE DATA FOR: {df_name}")
+    print("=" * 80)
+    df.show(5, truncate=False)
+
+    return df
+
+# -----------------------------
+# Clean all dataframes
+# -----------------------------
+claims_clean = clean_df(claims_df, "claims_df")
+disease_clean = clean_df(disease_df, "disease_df")
+group_clean = clean_df(group_df, "group_df")
+grpsubgrp_clean = clean_df(grpsubgrp_df, "grpsubgrp_df")
+hospital_clean = clean_df(hospital_df, "hospital_df")
+patient_clean = clean_df(patient_df, "patient_df")
+subgroup_clean = clean_df(subgroup_df, "subgroup_df")
+subscriber_clean = clean_df(subscriber_df, "subscriber_df")
+
+print("\nCleaning completed successfully.")
+# -----------------------------
+# Save cleaned data locally
+# -----------------------------
+OUTPUT_BASE = "file:///home/takeo/pycharmprojects/pythonproject/cleaned-data"
+
+claims_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/claims")
+disease_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/disease")
+group_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/policy_group")
+grpsubgrp_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/group_subgroup")
+hospital_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/hospital")
+patient_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/patients")
+subgroup_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/subgroup")
+subscriber_clean.coalesce(1).write.mode("overwrite").option("header", "true").csv(f"{OUTPUT_BASE}/subscriber")
+
+print("\nCleaned files saved successfully.")
+spark.stop()
